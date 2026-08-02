@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Alien Blaster</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at top, #17233f, #05070d 65%);
+      color: white;
+      font-family: Arial, Helvetica, sans-serif;
+      overflow: hidden;
+    }
+    .game-wrap {
+      width: min(960px, 96vw);
+      text-align: center;
+    }
+    h1 {
+      margin: 0 0 6px;
+      letter-spacing: 2px;
+    }
+    .help {
+      margin: 0 0 10px;
+      color: #cdd7ff;
+    }
+    canvas {
+      width: 100%;
+      height: auto;
+      display: block;
+      background: #02050b;
+      border: 3px solid #5670aa;
+      border-radius: 12px;
+      box-shadow: 0 0 25px rgba(90, 130, 255, 0.35);
+    }
+    .bottom {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+    button {
+      border: 0;
+      border-radius: 9px;
+      padding: 10px 18px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      background: #eff3ff;
+      color: #17213a;
+    }
+  </style>
+</head>
+<body>
+  <main class="game-wrap">
+    <h1>ALIEN BLASTER</h1>
+    <p class="help">Arrow keys move and rotate. Spacebar shoots. Reach 10,000 points to unlock the code.</p>
+    <canvas id="game" width="900" height="600"></canvas>
+    <div class="bottom">
+      <button id="startBtn">Start / Restart</button>
+    </div>
+  </main>
+
+<script>
+(() => {
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  const startBtn = document.getElementById("startBtn");
+
+  const keys = {};
+  const stars = [];
+  let ship;
+  let bullets = [];
+  let aliens = [];
+  let particles = [];
+  let score = 0;
+  let lives = 3;
+  let level = 1;
+  let gameOver = false;
+  let running = false;
+  let codeUnlocked = false;
+  let lastTime = 0;
+  let spawnTimer = 0;
+  let shootCooldown = 0;
+  let invincibleTimer = 0;
+
+  const SECRET_CODE = "GALAXY-10000";
+
+  for (let i = 0; i < 130; i++) {
+    stars.push({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      size: Math.random() * 2 + 0.5,
+      speed: Math.random() * 22 + 8
+    });
+  }
+
+  function resetShip() {
+    ship = {
+      x: canvas.width / 2,
+      y: canvas.height / 2,
+      angle: -Math.PI / 2,
+      radius: 18,
+      vx: 0,
+      vy: 0
+    };
+    invincibleTimer = 2;
+  }
+
+  function resetGame() {
+    bullets = [];
+    aliens = [];
+    particles = [];
+    score = 0;
+    lives = 3;
+    level = 1;
+    gameOver = false;
+    running = true;
+    codeUnlocked = false;
+    spawnTimer = 0;
+    shootCooldown = 0;
+    resetShip();
+  }
+
+  function wrap(obj, margin = 0) {
+    if (obj.x < -margin) obj.x = canvas.width + margin;
+    if (obj.x > canvas.width + margin) obj.x = -margin;
+    if (obj.y < -margin) obj.y = canvas.height + margin;
+    if (obj.y > canvas.height + margin) obj.y = -margin;
+  }
+
+  function shoot() {
+    if (shootCooldown > 0 || gameOver || !running) return;
+    const speed = 520;
+    bullets.push({
+      x: ship.x + Math.cos(ship.angle) * 22,
+      y: ship.y + Math.sin(ship.angle) * 22,
+      vx: Math.cos(ship.angle) * speed + ship.vx,
+      vy: Math.sin(ship.angle) * speed + ship.vy,
+      life: 1.25,
+      radius: 3
+    });
+    shootCooldown = 0.18;
+  }
+
+  function spawnAlien() {
+    const edge = Math.floor(Math.random() * 4);
+    let x, y;
+    if (edge === 0) { x = Math.random() * canvas.width; y = -35; }
+    if (edge === 1) { x = canvas.width + 35; y = Math.random() * canvas.height; }
+    if (edge === 2) { x = Math.random() * canvas.width; y = canvas.height + 35; }
+    if (edge === 3) { x = -35; y = Math.random() * canvas.height; }
+
+    const size = 20 + Math.random() * 18;
+    const angle = Math.atan2(ship.y - y, ship.x - x) + (Math.random() - 0.5) * 0.55;
+    const speed = 55 + Math.random() * 45 + level * 7;
+
+    aliens.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      radius: size,
+      spin: (Math.random() - 0.5) * 2,
+      rotation: Math.random() * Math.PI * 2,
+      hp: size > 31 ? 2 : 1,
+      points: size > 31 ? 400 : 250
+    });
+  }
+
+  function makeExplosion(x, y, amount = 18) {
+    for (let i = 0; i < amount; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = Math.random() * 180 + 40;
+      particles.push({
+        x, y,
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s,
+        life: Math.random() * 0.7 + 0.35,
+        maxLife: 1,
+        size: Math.random() * 4 + 2
+      });
+    }
+  }
+
+  function distance(a, b) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  function update(dt) {
+    if (!running || gameOver) return;
+
+    for (const s of stars) {
+      s.y += s.speed * dt;
+      if (s.y > canvas.height) {
+        s.y = 0;
+        s.x = Math.random() * canvas.width;
+      }
+    }
+
+    if (keys["ArrowLeft"]) ship.angle -= 3.5 * dt;
+    if (keys["ArrowRight"]) ship.angle += 3.5 * dt;
+
+    if (keys["ArrowUp"]) {
+      ship.vx += Math.cos(ship.angle) * 250 * dt;
+      ship.vy += Math.sin(ship.angle) * 250 * dt;
+    }
+
+    if (keys["ArrowDown"]) {
+      ship.vx *= Math.pow(0.05, dt);
+      ship.vy *= Math.pow(0.05, dt);
+    }
+
+    if (keys[" "]) shoot();
+
+    ship.vx *= Math.pow(0.72, dt);
+    ship.vy *= Math.pow(0.72, dt);
+
+    const maxSpeed = 310;
+    const speed = Math.hypot(ship.vx, ship.vy);
+    if (speed > maxSpeed) {
+      ship.vx = ship.vx / speed * maxSpeed;
+      ship.vy = ship.vy / speed * maxSpeed;
+    }
+
+    ship.x += ship.vx * dt;
+    ship.y += ship.vy * dt;
+    wrap(ship, ship.radius);
+
+    shootCooldown = Math.max(0, shootCooldown - dt);
+    invincibleTimer = Math.max(0, invincibleTimer - dt);
+
+    spawnTimer -= dt;
+    const spawnRate = Math.max(0.35, 1.15 - level * 0.07);
+    if (spawnTimer <= 0) {
+      spawnAlien();
+      spawnTimer = spawnRate;
+    }
+
+    bullets.forEach(b => {
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      b.life -= dt;
+    });
+    bullets = bullets.filter(b =>
+      b.life > 0 &&
+      b.x > -20 && b.x < canvas.width + 20 &&
+      b.y > -20 && b.y < canvas.height + 20
+    );
+
+    aliens.forEach(a => {
+      a.x += a.vx * dt;
+      a.y += a.vy * dt;
+      a.rotation += a.spin * dt;
+      wrap(a, 45);
+    });
+
+    particles.forEach(p => {
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vx *= Math.pow(0.2, dt);
+      p.vy *= Math.pow(0.2, dt);
+      p.life -= dt;
+    });
+    particles = particles.filter(p => p.life > 0);
+
+    for (let bi = bullets.length - 1; bi >= 0; bi--) {
+      let hit = false;
+      for (let ai = aliens.length - 1; ai >= 0; ai--) {
+        if (distance(bullets[bi], aliens[ai]) < bullets[bi].radius + aliens[ai].radius) {
+          aliens[ai].hp--;
+          makeExplosion(bullets[bi].x, bullets[bi].y, 6);
+          bullets.splice(bi, 1);
+          hit = true;
+
+          if (aliens[ai].hp <= 0) {
+            score += aliens[ai].points;
+            makeExplosion(aliens[ai].x, aliens[ai].y, 24);
+            aliens.splice(ai, 1);
+
+            level = Math.floor(score / 2000) + 1;
+            if (score >= 10000) codeUnlocked = true;
+          }
+          break;
+        }
+      }
+      if (hit) continue;
+    }
+
+    if (invincibleTimer <= 0) {
+      for (let ai = aliens.length - 1; ai >= 0; ai--) {
+        if (distance(ship, aliens[ai]) < ship.radius + aliens[ai].radius * 0.8) {
+          makeExplosion(ship.x, ship.y, 30);
+          aliens.splice(ai, 1);
+          lives--;
+
+          if (lives <= 0) {
+            gameOver = true;
+          } else {
+            resetShip();
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  function drawShip() {
+    ctx.save();
+    ctx.translate(ship.x, ship.y);
+    ctx.rotate(ship.angle);
+
+    if (invincibleTimer > 0 && Math.floor(invincibleTimer * 10) % 2 === 0) {
+      ctx.globalAlpha = 0.3;
+    }
+
+    if (keys["ArrowUp"] && running && !gameOver) {
+      ctx.fillStyle = "#ff9e2b";
+      ctx.beginPath();
+      ctx.moveTo(-17, -8);
+      ctx.lineTo(-34 - Math.random() * 10, 0);
+      ctx.lineTo(-17, 8);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.fillStyle = "#5fe7ff";
+    ctx.strokeStyle = "#d9fbff";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(24, 0);
+    ctx.lineTo(-16, -15);
+    ctx.lineTo(-10, 0);
+    ctx.lineTo(-16, 15);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#243b75";
+    ctx.beginPath();
+    ctx.arc(2, 0, 6, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawAlien(a) {
+    ctx.save();
+    ctx.translate(a.x, a.y);
+    ctx.rotate(a.rotation);
+
+    ctx.fillStyle = "#8dff5d";
+    ctx.strokeStyle = "#d6ffc6";
+    ctx.lineWidth = 2;
+
+    ctx.beginPath();
+    ctx.ellipse(0, 0, a.radius, a.radius * 0.58, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#5c38a8";
+    ctx.beginPath();
+    ctx.ellipse(0, -a.radius * 0.27, a.radius * 0.48, a.radius * 0.35, 0, Math.PI, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#ff355e";
+    for (let i = -1; i <= 1; i++) {
+      ctx.beginPath();
+      ctx.arc(i * a.radius * 0.45, a.radius * 0.18, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+
+  function draw() {
+    ctx.fillStyle = "#02050b";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    for (const s of stars) {
+      ctx.fillStyle = `rgba(255,255,255,${0.45 + s.size / 4})`;
+      ctx.fillRect(s.x, s.y, s.size, s.size);
+    }
+
+    particles.forEach(p => {
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = "#ffb23f";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+
+    aliens.forEach(drawAlien);
+
+    ctx.fillStyle = "#fff765";
+    bullets.forEach(b => {
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    if (ship && (!gameOver || lives > 0)) drawShip();
+
+    ctx.fillStyle = "white";
+    ctx.font = "bold 22px Arial";
+    ctx.fillText(`Score: ${score}`, 20, 34);
+    ctx.fillText(`Lives: ${lives}`, 20, 64);
+    ctx.fillText(`Level: ${level}`, canvas.width - 115, 34);
+
+    if (!running) {
+      drawOverlay("ALIEN BLASTER", "Press Start to play");
+    } else if (codeUnlocked) {
+      ctx.fillStyle = "rgba(0,0,0,0.75)";
+      ctx.fillRect(110, 190, canvas.width - 220, 220);
+      ctx.strokeStyle = "#66ff99";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(110, 190, canvas.width - 220, 220);
+
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#66ff99";
+      ctx.font = "bold 34px Arial";
+      ctx.fillText("CODE UNLOCKED!", canvas.width / 2, 250);
+      ctx.fillStyle = "white";
+      ctx.font = "bold 46px monospace";
+      ctx.fillText(SECRET_CODE, canvas.width / 2, 320);
+      ctx.font = "20px Arial";
+      ctx.fillText("You reached 10,000 points!", canvas.width / 2, 365);
+      ctx.textAlign = "left";
+    } else if (gameOver) {
+      drawOverlay("GAME OVER", `Final score: ${score}`);
+    }
+  }
+
+  function drawOverlay(title, subtitle) {
+    ctx.fillStyle = "rgba(0,0,0,0.7)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 52px Arial";
+    ctx.fillText(title, canvas.width / 2, canvas.height / 2 - 25);
+    ctx.font = "24px Arial";
+    ctx.fillStyle = "#bcd0ff";
+    ctx.fillText(subtitle, canvas.width / 2, canvas.height / 2 + 25);
+    ctx.textAlign = "left";
+  }
+
+  function gameLoop(timestamp) {
+    const dt = Math.min((timestamp - lastTime) / 1000 || 0, 0.033);
+    lastTime = timestamp;
+    update(dt);
+    draw();
+    requestAnimationFrame(gameLoop);
+  }
+
+  document.addEventListener("keydown", e => {
+    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)) {
+      e.preventDefault();
+    }
+    keys[e.key] = true;
+  });
+
+  document.addEventListener("keyup", e => {
+    keys[e.key] = false;
+  });
+
+  startBtn.addEventListener("click", resetGame);
+
+  resetShip();
+  draw();
+  requestAnimationFrame(gameLoop);
+})();
+</script>
+</body>
+</html>
