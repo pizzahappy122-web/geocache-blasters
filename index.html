@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -10,15 +11,24 @@
       text-align: center;
     }
     canvas {
-      background: #111;
+      background: #000;
       display: block;
       margin: 20px auto;
-      border: 2px solid white;
+      border: 2px solid #44ccff;
+      box-shadow: 0 0 20px #44ccff;
     }
     #startBtn {
       margin-top: 10px;
       padding: 8px 16px;
       font-size: 16px;
+      background: #222;
+      color: #fff;
+      border: 1px solid #44ccff;
+      box-shadow: 0 0 10px #44ccff;
+      cursor: pointer;
+    }
+    #startBtn:hover {
+      background: #333;
     }
   </style>
 </head>
@@ -33,7 +43,7 @@
   <button id="startBtn">Start / Restart</button>
   <p id="message"></p>
 
-  <canvas id="gameCanvas" width="600" height="600"></canvas>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
 
 <script>
 // ------------------------------
@@ -59,7 +69,224 @@ let ship;
 let bullets;
 let enemies;
 let score;
+let lives;
+let level;
 let running = false;
+
+let stars = [];
+let thrustParticles = [];
+
+// ------------------------------
+// STARFIELD (DRIFTING)
+// ------------------------------
+function initStars() {
+  stars = [];
+  for (let i = 0; i < 200; i++) {
+    stars.push({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      size: Math.random() * 2,
+      speed: 0.2 + Math.random() * 0.4
+    });
+  }
+}
+
+function drawStars() {
+  // subtle gradient
+  const grad = ctx.createRadialGradient(
+    canvas.width / 2, canvas.height / 2, 0,
+    canvas.width / 2, canvas.height / 2, canvas.width / 1.5
+  );
+  grad.addColorStop(0, "#000010");
+  grad.addColorStop(1, "#000000");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // drifting stars
+  ctx.fillStyle = "#ffffff";
+  stars.forEach(s => {
+    s.y += s.speed;
+    if (s.y > canvas.height) s.y = 0;
+    ctx.fillRect(s.x, s.y, s.size, s.size);
+  });
+}
+
+// ------------------------------
+// SHIP (BLUE TRIANGLE + GLOW + THRUST)
+// ------------------------------
+function drawShip() {
+  // glow
+  const glowGrad = ctx.createRadialGradient(
+    ship.x, ship.y, 0,
+    ship.x, ship.y, 40
+  );
+  glowGrad.addColorStop(0, "rgba(68,204,255,0.8)");
+  glowGrad.addColorStop(1, "rgba(68,204,255,0)");
+  ctx.fillStyle = glowGrad;
+  ctx.beginPath();
+  ctx.arc(ship.x, ship.y, 40, 0, Math.PI * 2);
+  ctx.fill();
+
+  // triangle
+  ctx.save();
+  ctx.translate(ship.x, ship.y);
+  ctx.rotate(ship.angle);
+
+  ctx.beginPath();
+  ctx.moveTo(0, -20);
+  ctx.lineTo(12, 15);
+  ctx.lineTo(-12, 15);
+  ctx.closePath();
+
+  const shipGrad = ctx.createLinearGradient(-12, -20, 12, 20);
+  shipGrad.addColorStop(0, "#44ccff");
+  shipGrad.addColorStop(1, "#0066aa");
+  ctx.fillStyle = shipGrad;
+  ctx.fill();
+
+  ctx.restore();
+}
+
+// thrust particles
+function addThrust() {
+  thrustParticles.push({
+    x: ship.x - Math.cos(ship.angle) * 10,
+    y: ship.y - Math.sin(ship.angle) * 10,
+    vx: (Math.random() - 0.5) * 1.5,
+    vy: (Math.random() - 0.5) * 1.5,
+    life: 20
+  });
+}
+
+function drawThrust() {
+  thrustParticles.forEach((p, i) => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life--;
+
+    const alpha = p.life / 20;
+    ctx.fillStyle = `rgba(255,140,0,${alpha})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (p.life <= 0) thrustParticles.splice(i, 1);
+  });
+}
+
+// ------------------------------
+// BULLETS
+// ------------------------------
+function drawBullets() {
+  bullets.forEach(b => {
+    b.x += Math.cos(b.angle) * 12;
+    b.y += Math.sin(b.angle) * 12;
+    ctx.fillStyle = "#ff9900";
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  bullets = bullets.filter(
+    b => b.x >= 0 && b.x <= canvas.width && b.y >= 0 && b.y <= canvas.height
+  );
+}
+
+// ------------------------------
+// ENEMIES (GREEN AMMO-CAN GEOCACHE CONTAINERS)
+// ------------------------------
+function spawnEnemy() {
+  const size = 40;
+  enemies.push({
+    x: Math.random() * canvas.width,
+    y: Math.random() * canvas.height * 0.7,
+    size,
+    vx: (Math.random() - 0.5) * 1.5,
+    vy: (Math.random() - 0.5) * 1.5
+  });
+}
+
+function drawEnemies() {
+  enemies.forEach(e => {
+    e.x += e.vx;
+    e.y += e.vy;
+
+    // bounce
+    if (e.x < e.size/2 || e.x > canvas.width - e.size/2) e.vx *= -1;
+    if (e.y < e.size/2 || e.y > canvas.height - e.size/2) e.vy *= -1;
+
+    const x = e.x;
+    const y = e.y;
+    const s = e.size;
+
+    // body
+    ctx.fillStyle = "#2e8b57";
+    ctx.fillRect(x - s/2, y - s/2, s, s);
+
+    // lid
+    ctx.fillStyle = "#1f5e3c";
+    ctx.fillRect(x - s/2, y - s/2 - 6, s, 10);
+
+    // handle
+    ctx.strokeStyle = "#c0c0c0";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(x - 10, y - s/2 - 3);
+    ctx.lineTo(x + 10, y - s/2 - 3);
+    ctx.stroke();
+
+    // "GC" text
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 14px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("GC", x, y + 5);
+  });
+}
+
+// ------------------------------
+// COLLISIONS
+// ------------------------------
+function handleCollisions() {
+  // bullets vs enemies
+  bullets.forEach((b, bi) => {
+    enemies.forEach((e, ei) => {
+      if (Math.abs(b.x - e.x) < e.size/2 && Math.abs(b.y - e.y) < e.size/2) {
+        enemies.splice(ei, 1);
+        bullets.splice(bi, 1);
+        score += 200;
+      }
+    });
+  });
+
+  // ship vs enemies
+  enemies.forEach((e, ei) => {
+    const dx = ship.x - e.x;
+    const dy = ship.y - e.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist < e.size/2 + 15) {
+      enemies.splice(ei, 1);
+      lives--;
+      if (lives <= 0) {
+        running = false;
+        message.textContent = "Game Over. Press Start to try again.";
+      }
+    }
+  });
+}
+
+// ------------------------------
+// UI (SCORE / LIVES / LEVEL)
+// ------------------------------
+function drawUI() {
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "16px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText("Score: " + score, 10, 20);
+  ctx.fillText("Lives: " + lives, 10, 40);
+
+  ctx.textAlign = "right";
+  ctx.fillText("Level: " + level, canvas.width - 10, 20);
+}
 
 // ------------------------------
 // GAME LOOP
@@ -67,69 +294,21 @@ let running = false;
 function loop() {
   if (!running) return;
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawStars();
+  drawThrust();
+  drawShip();
+  drawBullets();
+  drawEnemies();
+  handleCollisions();
+  drawUI();
 
-  // Draw ship (ORIGINAL)
-  ctx.save();
-  ctx.translate(ship.x, ship.y);
-  ctx.rotate(ship.angle);
-  ctx.fillStyle = "white";
-  ctx.fillRect(-10, -20, 20, 40);
-  ctx.restore();
-
-  // Move bullets (ORIGINAL)
-  bullets.forEach(b => {
-    b.x += Math.cos(b.angle) * 10;
-    b.y += Math.sin(b.angle) * 10;
-    ctx.fillStyle = "yellow";
-    ctx.fillRect(b.x - 2, b.y - 2, 4, 4);
-  });
-
-  // Spawn enemies (ORIGINAL)
-  if (Math.random() < 0.02) {
-    enemies.push({
-      x: Math.random() * canvas.width,
-      y: Math.random() * canvas.height,
-      size: 30
-    });
+  // level scaling
+  level = 1 + Math.floor(score / 2000);
+  if (Math.random() < 0.01 + level * 0.002) {
+    spawnEnemy();
   }
 
-  // Draw enemies — GREEN GEOCACHE AMMO CAN (NEW)
-  enemies.forEach(e => {
-    // Body
-    ctx.fillStyle = "#2e8b57"; // geocache green
-    ctx.fillRect(e.x - e.size/2, e.y - e.size/2, e.size, e.size);
-
-    // Lid
-    ctx.fillStyle = "#1f5e3c";
-    ctx.fillRect(e.x - e.size/2, e.y - e.size/2 - 6, e.size, 10);
-
-    // Handle
-    ctx.strokeStyle = "#c0c0c0";
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(e.x - 8, e.y - e.size/2 - 3);
-    ctx.lineTo(e.x + 8, e.y - e.size/2 - 3);
-    ctx.stroke();
-  });
-
-  // Bullet collisions (ORIGINAL)
-  bullets.forEach((b, bi) => {
-    enemies.forEach((e, ei) => {
-      if (Math.abs(b.x - e.x) < e.size/2 && Math.abs(b.y - e.y) < e.size/2) {
-        enemies.splice(ei, 1);
-        bullets.splice(bi, 1);
-        score += 100;
-      }
-    });
-  });
-
-  // Score display (ORIGINAL)
-  ctx.fillStyle = "white";
-  ctx.font = "16px Arial";
-  ctx.fillText("Score: " + score, 10, 20);
-
-  // Win condition (ORIGINAL + BACKEND)
+  // win condition
   if (score >= 10000) {
     running = false;
     message.textContent = "Loading reward code...";
@@ -144,35 +323,44 @@ function loop() {
 }
 
 // ------------------------------
-// CONTROLS (ORIGINAL)
+// CONTROLS
 // ------------------------------
 document.addEventListener("keydown", e => {
   if (!running) return;
 
-  if (e.key === "ArrowLeft") ship.angle -= 0.1;
-  if (e.key === "ArrowRight") ship.angle += 0.1;
+  if (e.key === "ArrowLeft") ship.angle -= 0.08;
+  if (e.key === "ArrowRight") ship.angle += 0.08;
   if (e.key === "ArrowUp") {
-    ship.x += Math.cos(ship.angle) * 5;
-    ship.y += Math.sin(ship.angle) * 5;
+    ship.x += Math.cos(ship.angle) * 4;
+    ship.y += Math.sin(ship.angle) * 4;
+    addThrust();
   }
   if (e.key === " ") {
     bullets.push({
-      x: ship.x,
-      y: ship.y,
+      x: ship.x + Math.cos(ship.angle) * 20,
+      y: ship.y + Math.sin(ship.angle) * 20,
       angle: ship.angle
     });
   }
 });
 
 // ------------------------------
-// START BUTTON (ORIGINAL)
+// START BUTTON
 // ------------------------------
 startBtn.onclick = () => {
   score = 0;
+  lives = 3;
+  level = 1;
   bullets = [];
   enemies = [];
-  ship = { x: canvas.width / 2, y: canvas.height / 2, angle: 0 };
+  thrustParticles = [];
+  ship = {
+    x: canvas.width / 2,
+    y: canvas.height / 2,
+    angle: -Math.PI / 2
+  };
   message.textContent = "";
+  initStars();
   running = true;
   loop();
 };
